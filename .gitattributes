@@ -1,0 +1,11 @@
+# Normalize line endings; silences the LF/CRLF warnings on Windows.
+* text=auto
+
+# Treat common binaries as binary (no eol conversion)
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
