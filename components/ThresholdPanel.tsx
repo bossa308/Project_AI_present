@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import type { AnalysisModel, AnomalyReport, Thresholds } from "@/lib/types";
 import { colorForIndex, fmtNumber } from "@/lib/analyze";
+import { downloadText, toCsv } from "@/lib/export";
 
 interface ThresholdPanelProps {
   model: AnalysisModel;
@@ -11,6 +12,10 @@ interface ThresholdPanelProps {
   onSet: (key: string, field: "min" | "max", value: number | null) => void;
   onAuto: (key: string) => void;
   onClear: (key: string) => void;
+  /** anomaly currently highlighted on the chart */
+  focus: { x: number; key: string } | null;
+  /** click a row to highlight + scroll the chart to that point */
+  onFocus: (x: number, key: string) => void;
 }
 
 const MAX_TABLE_ROWS = 100;
@@ -22,6 +27,8 @@ export default function ThresholdPanel({
   onSet,
   onAuto,
   onClear,
+  focus,
+  onFocus,
 }: ThresholdPanelProps) {
   const { seriesKeys } = model;
   const colorOf = useMemo(() => {
@@ -32,15 +39,37 @@ export default function ThresholdPanel({
 
   const visibleRows = report.rows.slice(0, MAX_TABLE_ROWS);
 
+  function downloadAnomalies() {
+    const headers = ["time_index", "series", "value", "bound", "type"];
+    const rows = report.rows.map((a) => [
+      a.xLabel,
+      a.seriesKey,
+      a.value,
+      a.bound,
+      a.kind === "over" ? "> max" : "< min",
+    ]);
+    downloadText("datapulse-anomalies.csv", toCsv(headers, rows));
+  }
+
   return (
     <section className="panel" aria-labelledby="th-title">
       <header className="panel-head">
         <h2 id="th-title" className="panel-title">
           เกณฑ์เตือน (Threshold)
         </h2>
-        <span className={`panel-meta mono${report.total > 0 ? " is-alert" : ""}`}>
-          {report.total} จุดผิดปกติ
-        </span>
+        <div className="panel-head-right">
+          <span className={`panel-meta mono${report.total > 0 ? " is-alert" : ""}`}>
+            {report.total} จุดผิดปกติ
+          </span>
+          <button
+            type="button"
+            className="btn btn-mini btn-ghost"
+            onClick={downloadAnomalies}
+            disabled={report.total === 0}
+          >
+            CSV
+          </button>
+        </div>
       </header>
 
       <div className="th-list">
@@ -120,20 +149,35 @@ export default function ThresholdPanel({
                 </td>
               </tr>
             ) : (
-              visibleRows.map((a, idx) => (
-                <tr key={`${a.seriesKey}-${a.x}-${idx}`}>
-                  <td className="mono">{a.xLabel}</td>
-                  <td>
-                    <span className="tt-swatch" style={{ background: colorOf[a.seriesKey] }} />
-                    <span className="mono">{a.seriesKey}</span>
-                  </td>
-                  <td className="num mono is-alert">{fmtNumber(a.value)}</td>
-                  <td className="num mono">
-                    {a.kind === "over" ? "> " : "< "}
-                    {fmtNumber(a.bound)}
-                  </td>
-                </tr>
-              ))
+              visibleRows.map((a, idx) => {
+                const isSel = focus?.x === a.x && focus?.key === a.seriesKey;
+                return (
+                  <tr
+                    key={`${a.seriesKey}-${a.x}-${idx}`}
+                    className={`row-click${isSel ? " is-selected" : ""}`}
+                    onClick={() => onFocus(a.x, a.seriesKey)}
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        onFocus(a.x, a.seriesKey);
+                      }
+                    }}
+                    title="คลิกเพื่อดูตำแหน่งบนกราฟ"
+                  >
+                    <td className="mono">{a.xLabel}</td>
+                    <td>
+                      <span className="tt-swatch" style={{ background: colorOf[a.seriesKey] }} />
+                      <span className="mono">{a.seriesKey}</span>
+                    </td>
+                    <td className="num mono is-alert">{fmtNumber(a.value)}</td>
+                    <td className="num mono">
+                      {a.kind === "over" ? "> " : "< "}
+                      {fmtNumber(a.bound)}
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
