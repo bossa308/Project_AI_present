@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Brush,
   CartesianGrid,
   Line,
   LineChart,
@@ -30,11 +29,12 @@ interface TrendChartProps {
   scales: Scales;
   drawId: number;
   reducedMotion: boolean;
-  /** anomaly clicked in the table → highlight it here + scroll into view */
+  /** anomaly clicked in the table → highlight it here + scroll into view + zoom */
   focus: { x: number; key: string } | null;
 }
 
 type FlatRow = Record<string, number | null | string>;
+type Range = [number, number];
 
 function isBreach(
   v: number,
@@ -62,7 +62,6 @@ export default function TrendChart({
   const { seriesKeys, xType, stats } = model;
   const wrapRef = useRef<HTMLDivElement>(null);
 
-  // stable color per series, keyed by the original order (survives hiding)
   const colorMap = useMemo(() => {
     const m: Record<string, string> = {};
     seriesKeys.forEach((k, i) => (m[k] = colorForIndex(i)));
@@ -72,17 +71,24 @@ export default function TrendChart({
   const [normalized, setNormalized] = useState(false);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
 
-  // new dataset -> show every series again
-  useEffect(() => setHidden(new Set()), [drawId]);
+  // zoom: zoomX = visible time window (data is sliced to it, so Y auto-fits);
+  // zoomY = explicit value window (for shift+scroll value-only zoom).
+  const [zoomX, setZoomX] = useState<Range | null>(null);
+  const [zoomY, setZoomY] = useState<Range | null>(null);
+  const [drag, setDrag] = useState<{ a: number; b: number } | null>(null);
+  const lastXRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    setHidden(new Set());
+    setZoomX(null);
+    setZoomY(null);
+    setDrag(null);
+  }, [drawId]);
 
   const visibleKeys = seriesKeys.filter((k) => !hidden.has(k));
-
   const visibleRows = useMemo(() => downsample(model.rows, 1000), [model.rows]);
   const downsampled = model.rows.length > visibleRows.length;
 
-  // ONE shared dataset. `${k}` is the *plotted* value (raw or normalized);
-  // `${k}__raw` keeps the true value for the tooltip; `${k}__anom` marks breaches
-  // at the plotted position; `${k}__sim` is the what-if line (plotted-space).
   const chartData = useMemo<FlatRow[]>(() => {
     return visibleRows.map((r) => {
       const o: FlatRow = { x: r.x, xLabel: r.xLabel };
@@ -95,14 +101,27 @@ export default function TrendChart({
         o[`${k}__raw`] = raw;
         o[`${k}__simRaw`] = simRaw;
         o[`${k}__sim`] = normalized ? norm(simRaw, stats[k]) : simRaw;
-        o[`${k}__anom`] =
-          raw !== null && isBreach(raw, thresholds[k]) ? plot : null;
+        o[`${k}__anom`] = raw !== null && isBreach(raw, thresholds[k]) ? plot : null;
       }
       return o;
     });
   }, [visibleRows, seriesKeys, scales, thresholds, normalized, stats]);
 
-  // Self-draw reveal only briefly after a new dataset loads.
+  const xExtent = useMemo<Range | null>(() => {
+    if (chartData.length === 0) return null;
+    return [Number(chartData[0].x), Number(chartData[chartData.length - 1].x)];
+  }, [chartData]);
+
+  // Slice to the zoom window — the axes (and Y auto-domain) then fit the window,
+  // which is what makes "zoom time" also magnify the values.
+  const displayData = useMemo<FlatRow[]>(() => {
+    if (!zoomX) return chartData;
+    return chartData.filter((r) => {
+      const x = Number(r.x);
+      return x >= zoomX[0] && x <= zoomX[1];
+    });
+  }, [chartData, zoomX]);
+
   const [animate, setAnimate] = useState(false);
   useEffect(() => {
     if (reducedMotion) {
@@ -118,7 +137,96 @@ export default function TrendChart({
   const soloKey = visibleKeys.length === 1 ? visibleKeys[0] : null;
   const soloTh = soloKey ? thresholds[soloKey] : null;
 
-  // Plotted position of the clicked anomaly (raw or normalized to match the axis).
+  /** [min,max] of plotted (and sim) values across the given rows — for Y zoom base. */
+  function valueRange(rows: FlatRow[]): Range | null {
+    let mn = Infinity;
+    let mx = -Infinity;
+    for (const r of rows) {
+      for (const k of visibleKeys) {
+        const v = r[k];
+        if (typeof v === "number") {
+          if (v < mn) mn = v;
+          if (v > mx) mx = v;
+        }
+        if (simActive) {
+          const s = r[`${k}__sim`];
+          if (typeof s === "number") {
+            if (s < mn) mn = s;
+            if (s > mx) mx = s;
+          }
+        }
+      }
+    }
+    if (mn === Infinity) return null;
+    const pad = (mx - mn) * 0.08 || Math.abs(mx) * 0.05 || 1;
+    return [mn - pad, mx + pad];
+  }
+
+  function zoomToX(x0: number, x1: number) {
+    if (!xExtent) return;
+    const a = Math.max(xExtent[0], Math.min(x0, x1));
+    const b = Math.min(xExtent[1], Math.max(x0, x1));
+    if (b - a < (xExtent[1] - xExtent[0]) * 0.004) return; // ignore clicks/tiny drags
+    setZoomX([a, b]);
+    setZoomY(null); // X zoom → let Y auto-fit the window
+  }
+  function resetZoom() {
+    setZoomX(null);
+    setZoomY(null);
+    setDrag(null);
+  }
+
+  const onChartDown = (e: any) => {
+    if (e && e.activeLabel != null) setDrag({ a: Number(e.activeLabel), b: Number(e.activeLabel) });
+  };
+  const onChartMove = (e: any) => {
+    if (e && e.activeLabel != null) {
+      lastXRef.current = Number(e.activeLabel);
+      setDrag((d) => (d ? { ...d, b: Number(e.activeLabel) } : d));
+    }
+  };
+  const onChartUp = () => {
+    if (drag) {
+      zoomToX(drag.a, drag.b);
+      setDrag(null);
+    }
+  };
+
+  // wheel: scroll = time(X) zoom around cursor; shift+scroll = value(Y) zoom.
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el || !xExtent) return;
+    const onWheel = (ev: WheelEvent) => {
+      ev.preventDefault();
+      const factor = ev.deltaY < 0 ? 0.82 : 1.22;
+      if (ev.shiftKey) {
+        const base = zoomY ?? (normalized ? ([0, 100] as Range) : valueRange(displayData));
+        if (!base) return;
+        const c = (base[0] + base[1]) / 2;
+        const half = ((base[1] - base[0]) / 2) * factor;
+        setZoomY([c - half, c + half]);
+      } else {
+        const base = zoomX ?? xExtent;
+        const lx = lastXRef.current;
+        const center = lx != null && lx >= base[0] && lx <= base[1] ? lx : (base[0] + base[1]) / 2;
+        let nx0 = center - (center - base[0]) * factor;
+        let nx1 = center + (base[1] - center) * factor;
+        nx0 = Math.max(xExtent[0], nx0);
+        nx1 = Math.min(xExtent[1], nx1);
+        if (nx1 - nx0 >= xExtent[1] - xExtent[0]) {
+          setZoomX(null);
+          setZoomY(null);
+          return;
+        }
+        setZoomX([nx0, nx1]);
+        setZoomY(null);
+      }
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoomX, zoomY, normalized, xExtent, displayData, simActive, hidden]);
+
   const focusPoint = useMemo(() => {
     if (!focus) return null;
     const row = model.rows.find((r) => r.x === focus.x);
@@ -127,8 +235,6 @@ export default function TrendChart({
     return { x: focus.x, y };
   }, [focus, model.rows, normalized, stats]);
 
-  // When an anomaly is clicked: reveal its series if hidden, and bring the chart
-  // into view only if it isn't already (so a sticky/visible chart doesn't jump).
   useEffect(() => {
     if (!focus) return;
     setHidden((prev) => {
@@ -138,15 +244,18 @@ export default function TrendChart({
       return next;
     });
     const el = wrapRef.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    const fullyVisible = r.top >= 0 && r.bottom <= window.innerHeight;
-    if (!fullyVisible) {
-      el.scrollIntoView({
-        behavior: reducedMotion ? "auto" : "smooth",
-        block: "center",
-      });
+    if (el) {
+      const r = el.getBoundingClientRect();
+      const fullyVisible = r.top >= 0 && r.bottom <= window.innerHeight;
+      if (!fullyVisible) {
+        el.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "center" });
+      }
     }
+    if (xExtent) {
+      const w = (xExtent[1] - xExtent[0]) * 0.06;
+      zoomToX(focus.x - w, focus.x + w);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focus, reducedMotion]);
 
   function toggleSeries(k: string) {
@@ -160,13 +269,9 @@ export default function TrendChart({
 
   function exportData() {
     const headers = [xType === "time" ? "time" : "index", ...seriesKeys];
-    const rows = model.rows.map((r) => [
-      r.xLabel,
-      ...seriesKeys.map((k) => r.values[k]),
-    ]);
+    const rows = model.rows.map((r) => [r.xLabel, ...seriesKeys.map((k) => r.values[k])]);
     downloadText("datapulse-data.csv", toCsv(headers, rows));
   }
-
   async function exportPng() {
     const svg = wrapRef.current?.querySelector(".recharts-surface");
     if (svg) await exportSvgToPng(svg as unknown as SVGSVGElement, "datapulse-chart.png");
@@ -174,8 +279,7 @@ export default function TrendChart({
 
   const xTickFormatter = (x: number) =>
     xType === "time" ? formatTime(x) : String(Math.round(x) + 1);
-  const yTickFormatter = (v: number) =>
-    normalized ? String(Math.round(v)) : fmtNumber(v);
+  const yTickFormatter = (v: number) => (normalized ? String(Math.round(v)) : fmtNumber(v));
 
   if (seriesKeys.length === 0) {
     return (
@@ -184,6 +288,9 @@ export default function TrendChart({
       </div>
     );
   }
+
+  const zoomed = zoomX !== null || zoomY !== null;
+  const yDomain: [any, any] = zoomY ?? (normalized ? [0, 100] : ["auto", "auto"]);
 
   return (
     <div className="chart-block">
@@ -207,6 +314,11 @@ export default function TrendChart({
             ปรับสเกล
           </button>
         </div>
+        {zoomed && (
+          <button type="button" className="btn btn-mini btn-ghost" onClick={resetZoom}>
+            รีเซ็ตซูม
+          </button>
+        )}
         <div className="toolbar-spacer" />
         <button type="button" className="btn btn-mini btn-ghost" onClick={exportData}>
           ข้อมูล CSV
@@ -219,7 +331,14 @@ export default function TrendChart({
       <div className="chart-wrap" ref={wrapRef}>
         {animate && <span className="chart-sweep" key={drawId} aria-hidden="true" />}
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={chartData} margin={{ top: 12, right: 16, bottom: 4, left: 4 }}>
+          <LineChart
+            data={displayData}
+            margin={{ top: 12, right: 16, bottom: 4, left: 4 }}
+            onMouseDown={onChartDown}
+            onMouseMove={onChartMove}
+            onMouseUp={onChartUp}
+            onMouseLeave={() => setDrag(null)}
+          >
             <CartesianGrid stroke="var(--grid)" strokeDasharray="2 4" vertical={false} />
             <XAxis
               dataKey="x"
@@ -235,7 +354,8 @@ export default function TrendChart({
               tick={{ fill: "var(--muted)", fontSize: 11, fontFamily: "var(--font-mono)" }}
               stroke="var(--grid-strong)"
               width={normalized ? 38 : 52}
-              domain={normalized ? [0, 100] : ["auto", "auto"]}
+              domain={yDomain}
+              allowDataOverflow={zoomY !== null}
               tickFormatter={yTickFormatter}
             />
             <Tooltip
@@ -252,15 +372,8 @@ export default function TrendChart({
               isAnimationActive={false}
             />
 
-            {/* raw mode + single series: shaded threshold band */}
             {!normalized && soloKey && soloTh && soloTh.min !== null && soloTh.max !== null && (
-              <ReferenceArea
-                y1={soloTh.min}
-                y2={soloTh.max}
-                fill="var(--accent)"
-                fillOpacity={0.06}
-                stroke="none"
-              />
+              <ReferenceArea y1={soloTh.min} y2={soloTh.max} fill="var(--accent)" fillOpacity={0.06} stroke="none" />
             )}
             {!normalized && soloTh?.min != null && (
               <ReferenceLine y={soloTh.min} stroke={ANOMALY_COLOR} strokeDasharray="4 4" strokeOpacity={0.5} />
@@ -269,38 +382,31 @@ export default function TrendChart({
               <ReferenceLine y={soloTh.max} stroke={ANOMALY_COLOR} strokeDasharray="4 4" strokeOpacity={0.5} />
             )}
 
-            {/* normalized mode: each series' limits as thin colored lines (multi band) */}
             {normalized &&
               visibleKeys.map((k) => {
                 const th = thresholds[k];
                 if (!th) return null;
-                const i = seriesKeys.indexOf(k);
-                const c = colorForIndex(i);
-                const lines = [] as JSX.Element[];
+                const c = colorMap[k];
+                const out = [] as JSX.Element[];
                 const nMax = norm(th.max, stats[k]);
                 const nMin = norm(th.min, stats[k]);
                 if (th.max !== null && nMax !== null)
-                  lines.push(
-                    <ReferenceLine key={`${k}-max`} y={nMax} stroke={c} strokeDasharray="2 4" strokeOpacity={0.4} />
-                  );
+                  out.push(<ReferenceLine key={`${k}-max`} y={nMax} stroke={c} strokeDasharray="2 4" strokeOpacity={0.4} />);
                 if (th.min !== null && nMin !== null)
-                  lines.push(
-                    <ReferenceLine key={`${k}-min`} y={nMin} stroke={c} strokeDasharray="2 4" strokeOpacity={0.4} />
-                  );
-                return lines;
+                  out.push(<ReferenceLine key={`${k}-min`} y={nMin} stroke={c} strokeDasharray="2 4" strokeOpacity={0.4} />);
+                return out;
               })}
 
             {simActive &&
               visibleKeys.map((k) => {
                 if ((scales[k] ?? 1) === 1) return null;
-                const i = seriesKeys.indexOf(k);
                 return (
                   <Line
                     key={`sim-${k}`}
                     type="monotone"
                     dataKey={`${k}__sim`}
                     name={`${k} ×${(scales[k] ?? 1).toFixed(2)}`}
-                    stroke={colorForIndex(i)}
+                    stroke={colorMap[k]}
                     strokeWidth={1.4}
                     strokeDasharray="5 4"
                     strokeOpacity={0.85}
@@ -313,23 +419,13 @@ export default function TrendChart({
               })}
 
             {visibleKeys.map((k) => {
+              const color = colorMap[k];
               const i = seriesKeys.indexOf(k);
-              const color = colorForIndex(i);
               const anomalyDot = (props: any) => {
                 const { cx, cy, payload, index } = props;
-                if (cx == null || cy == null || !payload || payload[`${k}__anom`] == null) {
-                  return null;
-                }
+                if (cx == null || cy == null || !payload || payload[`${k}__anom`] == null) return null;
                 return (
-                  <circle
-                    key={`anom-${k}-${index}`}
-                    cx={cx}
-                    cy={cy}
-                    r={3.4}
-                    fill={ANOMALY_COLOR}
-                    stroke="var(--bg)"
-                    strokeWidth={1}
-                  />
+                  <circle key={`anom-${k}-${index}`} cx={cx} cy={cy} r={3.4} fill={ANOMALY_COLOR} stroke="var(--bg)" strokeWidth={1} />
                 );
               };
               return (
@@ -352,36 +448,22 @@ export default function TrendChart({
             })}
 
             {focus && (
-              <ReferenceLine
-                x={focus.x}
-                stroke="var(--accent)"
-                strokeWidth={1.5}
-                strokeDasharray="4 3"
-                ifOverflow="extendDomain"
-              />
+              <ReferenceLine x={focus.x} stroke="var(--accent)" strokeWidth={1.5} strokeDasharray="4 3" ifOverflow="hidden" />
             )}
             {focusPoint && focusPoint.y !== null && (
-              <ReferenceDot
-                x={focusPoint.x}
-                y={focusPoint.y}
-                r={7}
-                fill="none"
-                stroke="var(--accent)"
-                strokeWidth={2}
-                ifOverflow="extendDomain"
-                isFront
-              />
+              <ReferenceDot x={focusPoint.x} y={focusPoint.y} r={7} fill="none" stroke="var(--accent)" strokeWidth={2} ifOverflow="hidden" isFront />
             )}
 
-            <Brush
-              key={drawId}
-              dataKey="x"
-              height={20}
-              travellerWidth={8}
-              stroke="var(--accent)"
-              fill="var(--surface-2)"
-              tickFormatter={xTickFormatter}
-            />
+            {drag && drag.a !== drag.b && (
+              <ReferenceArea
+                x1={Math.min(drag.a, drag.b)}
+                x2={Math.max(drag.a, drag.b)}
+                fill="var(--accent)"
+                fillOpacity={0.12}
+                stroke="var(--accent)"
+                strokeOpacity={0.4}
+              />
+            )}
           </LineChart>
         </ResponsiveContainer>
       </div>
@@ -400,9 +482,7 @@ export default function TrendChart({
             >
               <span className="legend-swatch" style={{ background: colorForIndex(i) }} />
               <span className="mono">{k}</span>
-              {(scales[k] ?? 1) !== 1 && (
-                <span className="legend-sim mono">×{(scales[k] ?? 1).toFixed(2)}</span>
-              )}
+              {(scales[k] ?? 1) !== 1 && <span className="legend-sim mono">×{(scales[k] ?? 1).toFixed(2)}</span>}
             </button>
           );
         })}
@@ -410,6 +490,7 @@ export default function TrendChart({
           <span className="legend-swatch" style={{ background: ANOMALY_COLOR }} />
           <span>เกินเกณฑ์</span>
         </span>
+        <span className="legend-note mono">ลากเลือกช่วง = ซูม · scroll = ซูมเวลา · shift+scroll = ซูมค่า</span>
         {normalized && <span className="legend-note mono">สเกล 0–100 (tooltip = ค่าจริง)</span>}
         {downsampled && (
           <span className="legend-note mono">
