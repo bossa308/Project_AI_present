@@ -131,9 +131,20 @@ export function inferMapping(ds: RawDataset): ColumnMapping {
   return { timeColumn, columns };
 }
 
+/** Linear-interpolated quantile of an ascending-sorted array. */
+function quantile(sortedAsc: number[], q: number): number {
+  if (sortedAsc.length === 0) return NaN;
+  if (sortedAsc.length === 1) return sortedAsc[0];
+  const pos = (sortedAsc.length - 1) * q;
+  const lo = Math.floor(pos);
+  const hi = Math.ceil(pos);
+  if (lo === hi) return sortedAsc[lo];
+  return sortedAsc[lo] + (sortedAsc[hi] - sortedAsc[lo]) * (pos - lo);
+}
+
 function computeStats(key: string, nums: number[]): SeriesStats {
   if (nums.length === 0) {
-    return { key, count: 0, min: NaN, max: NaN, avg: NaN, std: NaN };
+    return { key, count: 0, min: NaN, max: NaN, avg: NaN, std: NaN, median: NaN, mad: NaN };
   }
   let min = Infinity;
   let max = -Infinity;
@@ -147,7 +158,13 @@ function computeStats(key: string, nums: number[]): SeriesStats {
   let variance = 0;
   for (const n of nums) variance += (n - avg) * (n - avg);
   const std = Math.sqrt(variance / nums.length);
-  return { key, count: nums.length, min, max, avg, std };
+
+  const sorted = [...nums].sort((a, b) => a - b);
+  const median = quantile(sorted, 0.5);
+  const devs = sorted.map((v) => Math.abs(v - median)).sort((a, b) => a - b);
+  const mad = quantile(devs, 0.5);
+
+  return { key, count: nums.length, min, max, avg, std, median, mad };
 }
 
 /**
@@ -206,15 +223,37 @@ export function analyze(ds: RawDataset, mapping: ColumnMapping): AnalysisModel {
   };
 }
 
-/** Suggest min/max bounds at roughly avg ± 2σ (rounded to a tidy precision). */
+/**
+ * Suggest min/max bounds using a robust, outlier-resistant rule:
+ * median ± 3·(1.4826·MAD). Because a single bad sensor reading barely moves the
+ * median or MAD, the suggestion stays sensible even with wild spikes — so the
+ * real excursions still get flagged instead of inflating the band past them.
+ * Falls back to avg ± 2σ when MAD is degenerate (e.g. very flat data).
+ */
 export function suggestThreshold(stats: SeriesStats | undefined): Threshold {
-  if (!stats || stats.count === 0 || !Number.isFinite(stats.std)) {
+  if (!stats || stats.count === 0) return { min: null, max: null };
+
+  const robustSigma =
+    Number.isFinite(stats.mad) && stats.mad > 0 ? 1.4826 * stats.mad : NaN;
+
+  let lo: number;
+  let hi: number;
+  if (Number.isFinite(robustSigma) && Number.isFinite(stats.median)) {
+    const k = 3;
+    lo = stats.median - k * robustSigma;
+    hi = stats.median + k * robustSigma;
+  } else if (Number.isFinite(stats.std)) {
+    lo = stats.avg - 2 * stats.std;
+    hi = stats.avg + 2 * stats.std;
+  } else {
     return { min: null, max: null };
   }
-  const k = 2;
+
+  // A bound outside the observed range can never trigger — drop it so the panel
+  // only shows meaningful limits (and no odd negatives for positive-only data).
   return {
-    min: roundNice(stats.avg - k * stats.std),
-    max: roundNice(stats.avg + k * stats.std),
+    min: lo > stats.min ? roundNice(lo) : null,
+    max: hi < stats.max ? roundNice(hi) : null,
   };
 }
 

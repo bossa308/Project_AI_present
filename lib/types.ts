@@ -51,8 +51,12 @@ export interface SeriesStats {
   min: number;
   max: number;
   avg: number;
-  /** population standard deviation — used to suggest thresholds */
+  /** population standard deviation */
   std: number;
+  /** median — robust center for threshold suggestions */
+  median: number;
+  /** median absolute deviation — outlier-resistant spread */
+  mad: number;
 }
 
 export interface AnalysisModel {
