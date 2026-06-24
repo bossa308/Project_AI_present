@@ -290,6 +290,42 @@ body {
   animation: pulse 1.8s ease-out infinite;
 }
 
+/* example-dataset chips */
+.sample-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.sample-hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+.chip {
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--accent-2);
+  background: var(--accent-soft);
+  border: 1px solid #dfe2ff;
+  border-radius: 999px;
+  padding: 6px 13px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+}
+.chip:hover {
+  background: #e4e6ff;
+  border-color: var(--accent);
+}
+.chip:active {
+  transform: translateY(1px);
+}
+.chip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* spinner */
 .spinner {
   width: 22px;
@@ -540,6 +576,256 @@ body {
   margin-left: auto;
   color: var(--muted);
   font-size: 11px;
+}
+
+/* chart toolbar + segmented control */
+.chart-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.chart-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.toolbar-spacer {
+  flex: 1;
+}
+.seg {
+  display: inline-flex;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px;
+  gap: 2px;
+}
+.seg-btn {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.seg-btn.is-on {
+  background: var(--surface);
+  color: var(--accent);
+  box-shadow: var(--shadow-sm);
+}
+
+/* legend items as show/hide toggles */
+.legend-toggle {
+  background: none;
+  border: none;
+  font: inherit;
+  color: var(--text-dim);
+  padding: 2px 4px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.legend-toggle:hover {
+  background: var(--surface-2);
+}
+.legend-toggle.is-hidden {
+  opacity: 0.45;
+}
+.legend-toggle.is-hidden .legend-swatch {
+  filter: grayscale(1);
+}
+.legend-toggle.is-hidden .mono {
+  text-decoration: line-through;
+}
+
+.panel-head-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* recharts brush (range selector) */
+.recharts-brush-slide {
+  fill: var(--accent);
+  fill-opacity: 0.06;
+}
+.recharts-brush > rect:first-of-type {
+  fill: var(--surface-2);
+  stroke: var(--border);
+}
+.recharts-brush-traveller rect {
+  fill: var(--surface);
+  stroke: var(--accent);
+}
+.recharts-brush text {
+  fill: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+/* clickable anomaly rows → highlight on the chart */
+.data-table tr.row-click {
+  cursor: pointer;
+}
+.data-table tr.row-click:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.data-table tr.is-selected td {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.data-table tr.is-selected:hover td {
+  background: #e4e6ff;
+}
+
+/* keep the chart visible while scrolling the anomaly table (desktop) */
+@media (min-width: 1001px) {
+  .chart-panel {
+    position: sticky;
+    top: 12px;
+    z-index: 5;
+  }
+}
+
+/* ---------------------------------------------- commissioning report bar */
+.report-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+.report-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.report-field .input {
+  font-size: 13px;
+}
+.report-hint {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* printable report — only visible when printing (paper colors, theme-agnostic) */
+.print-report {
+  display: none;
+}
+.pr-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  border-bottom: 2px solid #4f46e5;
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+}
+.pr-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: #1f2430;
+}
+.pr-sub {
+  font-size: 11px;
+  color: #6b7280;
+}
+.pr-stamp {
+  font-size: 11px;
+  color: #6b7280;
+  white-space: nowrap;
+}
+.pr-meta {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+.pr-meta th {
+  text-align: left;
+  color: #6b7280;
+  font-weight: 600;
+  width: 14%;
+  padding: 3px 6px;
+  vertical-align: top;
+}
+.pr-meta td {
+  padding: 3px 6px;
+  color: #1f2430;
+  width: 36%;
+}
+.pr-chart {
+  width: 100%;
+  height: auto;
+  border: 1px solid #e3e3e8;
+  border-radius: 6px;
+  margin-bottom: 12px;
+  page-break-inside: avoid;
+}
+.pr-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  margin-bottom: 10px;
+}
+.pr-table th {
+  background: #f3f4f8;
+  text-align: left;
+  padding: 5px 7px;
+  border: 1px solid #e0e2ea;
+  color: #444;
+}
+.pr-table td {
+  padding: 4px 7px;
+  border: 1px solid #eceef4;
+  color: #222;
+}
+.pr-table .num {
+  text-align: right;
+}
+.pr-section {
+  font-size: 13px;
+  font-weight: 700;
+  margin: 10px 0 6px;
+  color: #1f2430;
+}
+.pr-note {
+  font-size: 10px;
+  color: #888;
+  margin-bottom: 8px;
+}
+.pr-foot {
+  font-size: 10px;
+  color: #888;
+  border-top: 1px solid #e3e3e8;
+  padding-top: 6px;
+  margin-top: 8px;
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .print-report,
+  .print-report * {
+    visibility: visible;
+  }
+  .print-report {
+    display: block !important;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    background: #fff;
+    font-family: var(--font-sans);
+  }
+  @page {
+    margin: 14mm;
+  }
 }
 
 .recharts-cartesian-axis-tick-value {

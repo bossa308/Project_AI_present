@@ -8,6 +8,7 @@ import ColumnMapper from "@/components/ColumnMapper";
 import KpiCards from "@/components/KpiCards";
 import ThresholdPanel from "@/components/ThresholdPanel";
 import SimulatorPanel from "@/components/SimulatorPanel";
+import CommissioningReport from "@/components/CommissioningReport";
 
 import { ParseError, parseFile } from "@/lib/parsers";
 import {
@@ -55,6 +56,8 @@ export default function Page() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [drawId, setDrawId] = useState(0);
+  // anomaly the user clicked in the table → highlighted/scrolled-to on the chart
+  const [focus, setFocus] = useState<{ x: number; key: string } | null>(null);
 
   const reducedMotion = useReducedMotion();
 
@@ -87,6 +90,7 @@ export default function Page() {
     setThresholds(th);
     setScales(sc);
     setError(null);
+    setFocus(null);
     setDrawId((d) => d + 1);
   }
 
@@ -117,6 +121,40 @@ export default function Page() {
     } finally {
       setBusy(false);
     }
+  }
+
+  // Bundled real-world example CSVs (served from /public/examples). They flow
+  // through the exact same parseFile pipeline as a user-dropped file.
+  const EXAMPLE_FILES: Record<string, { file: string; name: string }> = {
+    air: { file: "/examples/bangkok-air-quality.csv", name: "bangkok-air-quality.csv" },
+    power: { file: "/examples/power-meter.csv", name: "power-meter.csv" },
+  };
+
+  function loadSample(id: string) {
+    if (id === "plant") {
+      handleSample();
+      return;
+    }
+    const ex = EXAMPLE_FILES[id];
+    if (!ex) return;
+    (async () => {
+      setBusy(true);
+      setError(null);
+      try {
+        const res = await fetch(ex.file);
+        if (!res.ok) throw new ParseError("โหลดไฟล์ตัวอย่างไม่สำเร็จ — ลองรีเฟรชหน้า");
+        const blob = await res.blob();
+        const file = new File([blob], ex.name, { type: "text/csv" });
+        const ds = await parseFile(file);
+        loadDataset(ds);
+      } catch (e) {
+        setError(
+          e instanceof ParseError ? e.message : "โหลดชุดข้อมูลตัวอย่างไม่สำเร็จ"
+        );
+      } finally {
+        setBusy(false);
+      }
+    })();
   }
 
   /** Apply an edited column mapping, seeding defaults for any new series. */
@@ -169,6 +207,7 @@ export default function Page() {
     setScales({});
     setError(null);
     setBusy(false);
+    setFocus(null);
   }
 
   const hasData = !!model && !!mapping;
@@ -197,7 +236,7 @@ export default function Page() {
       <main className="app-main">
         <FileDrop
           onFile={handleFile}
-          onSample={handleSample}
+          onSample={loadSample}
           onReset={reset}
           busy={busy}
           hasData={hasData}
@@ -227,6 +266,13 @@ export default function Page() {
 
             <section className="board">
               <div className="board-main">
+                <CommissioningReport
+                  model={model}
+                  report={baseReport}
+                  thresholds={thresholds}
+                  fileName={dataset?.fileName}
+                />
+
                 <section className="panel chart-panel" aria-labelledby="chart-title">
                   <header className="panel-head">
                     <h2 id="chart-title" className="panel-title">
@@ -242,6 +288,7 @@ export default function Page() {
                     scales={scales}
                     drawId={drawId}
                     reducedMotion={reducedMotion}
+                    focus={focus}
                   />
                 </section>
 
@@ -252,6 +299,8 @@ export default function Page() {
                   onSet={setThreshold}
                   onAuto={autoThreshold}
                   onClear={clearThreshold}
+                  focus={focus}
+                  onFocus={(x, key) => setFocus({ x, key })}
                 />
               </div>
 
