@@ -4,7 +4,8 @@ import { useCallback, useRef, useState } from "react";
 
 interface FileDropProps {
   onFile: (file: File) => void;
-  onSample: () => void;
+  /** id of the example dataset to load: "plant" | "air" | "power" */
+  onSample: (id: string) => void;
   onReset: () => void;
   busy: boolean;
   hasData: boolean;
@@ -95,7 +96,12 @@ export default function FileDrop({
       </div>
 
       <div className="dropzone-actions" onClick={(e) => e.stopPropagation()}>
-        <button type="button" className="btn btn-accent" onClick={onSample} disabled={busy}>
+        <button
+          type="button"
+          className="btn btn-accent"
+          onClick={() => onSample("plant")}
+          disabled={busy}
+        >
           โหลดข้อมูลตัวอย่าง
         </button>
         {hasData && (
@@ -103,6 +109,26 @@ export default function FileDrop({
             ล้างข้อมูล
           </button>
         )}
+      </div>
+
+      <div className="sample-row" onClick={(e) => e.stopPropagation()}>
+        <span className="sample-hint">หรือลองชุดข้อมูลจริง:</span>
+        <button
+          type="button"
+          className="chip"
+          onClick={() => onSample("air")}
+          disabled={busy}
+        >
+          คุณภาพอากาศ กทม.
+        </button>
+        <button
+          type="button"
+          className="chip"
+          onClick={() => onSample("power")}
+          disabled={busy}
+        >
+          มิเตอร์ไฟฟ้า
+        </button>
       </div>
 
       {hasData && fileName && (
