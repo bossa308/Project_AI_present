@@ -126,8 +126,8 @@ export default function Page() {
   // Bundled real-world example CSVs (served from /public/examples). They flow
   // through the exact same parseFile pipeline as a user-dropped file.
   const EXAMPLE_FILES: Record<string, { file: string; name: string }> = {
-    air: { file: "/examples/bangkok-air-quality.csv", name: "bangkok-air-quality.csv" },
-    power: { file: "/examples/power-meter.csv", name: "power-meter.csv" },
+    air: { file: "/examples/bangkok_air_quality.csv", name: "bangkok_air_quality.csv" },
+    power: { file: "/examples/electricity_meter.csv", name: "electricity_meter.csv" },
   };
 
   function loadSample(id: string) {
